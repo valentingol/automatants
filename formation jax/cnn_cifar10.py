@@ -1,40 +1,17 @@
+from functools import partial
 import os
+
+import haiku as hk
 import jax
 import jax.dlpack
 from jax import random, grad, jit
 from jax import numpy as jnp
-import numpy as np
-import haiku as hk
-import tensorflow as tf
-import optax
 import matplotlib.pyplot as plt
-from functools import partial
+import optax
 
-def preprocessing(X, y):
-    X = tf.cast(X, tf.float32) / 255.0
-    y = tf.one_hot(y, 10, dtype=tf.float32)
-    return X, y
-
-
-def get_data(batch_size=64, val_prop=0.2):
-    data = tf.keras.datasets.cifar10.load_data()
-    (x_train, y_train), (x_test, y_test) = data
-    train_ds = tf.data.Dataset.from_tensor_slices(
-        (x_train, y_train)
-        ).shuffle(50_000).batch(batch_size).prefetch(2)
-    test_ds = tf.data.Dataset.from_tensor_slices(
-        (x_test, y_test)
-        ).shuffle(50_000).batch(batch_size).prefetch(2)
-
-    len_train_val = len(train_ds)
-    len_val = int(len_train_val * val_prop)
-    len_train = len_train_val - len_val
-
-    train_ds, val_ds = train_ds.take(len_train), train_ds.skip(len_val)
-    val_ds = val_ds.map(preprocessing)
-    train_ds = train_ds.map(preprocessing)
-    test_ds = test_ds.map(preprocessing)
-    return train_ds, val_ds, test_ds
+from utils.cifar10 import load_cifar10
+from utils.save_and_load import save_jax_model, load_jax_model
+from utils.plot import plt_curves, plt_curves_test
 
 def tf_to_jax(tf_tensor1, tf_tensor2):
     jax_tensor1 = jnp.array(tf_tensor1)
@@ -135,7 +112,7 @@ def init_states(key, ds, lr):
         X, _ = tf_to_jax(X, y)
         params, state = forward_pass.init(key, X, True)
         break
-    optimizer = optax.sgd(learning_rate=lr, momentum=0.9)
+    optimizer = optax.sgd(lr, momentum=0.9)
     opt_state = optimizer.init(params)
     return params, optimizer, opt_state, state
 
@@ -176,7 +153,7 @@ def train_loop(train_ds, params, state, opt_state, optimizer, key):
 def val_loop(val_ds, params, state, key):
     val_loss_mean, val_metric_mean = jnp.zeros(1), jnp.zeros(1)
     i = 0
-    for i, (X_batch, y_batch) in enumerate(val_ds):
+    for X_batch, y_batch in val_ds:
         X_batch, y_batch = tf_to_jax(X_batch, y_batch)
         state, val_loss, val_metric = validate(
             params, state, X_batch, y_batch, key
@@ -191,24 +168,8 @@ def val_loop(val_ds, params, state, key):
 
 def test_loop(test_ds, params, state, key):
     test_loss, test_metric = val_loop(test_ds, params, state, key)
+    test_loss, test_metric = test_loss.item(), test_metric.item()
     return test_loss, test_metric
-
-
-def plt_curves(train_losses, train_metrics, val_metrics, val_losses):
-    plt.figure(figsize=(10, 5))
-    plt.subplot(1, 2, 1)
-    times = list(range(len(train_losses)))
-    plt.title('Loss')
-    plt.plot(times, train_losses, 'r--', label='train')
-    plt.plot(times, val_losses, 'r', label='val')
-    plt.ylim(0, 2.4)
-    plt.legend(loc='best')
-    plt.subplot(1, 2, 2)
-    plt.title('Accuracy')
-    plt.plot(times, train_metrics, 'b--', label='train')
-    plt.plot(times, val_metrics, 'b', label='val')
-    plt.ylim(0, 1)
-    plt.legend(loc='best')
 
 
 def train_valid_loop(train_ds, val_ds, n_epochs, key, lr, verbose=True):
@@ -236,33 +197,46 @@ def train_valid_loop(train_ds, val_ds, n_epochs, key, lr, verbose=True):
                 f'  train metric: {train_metric.item(): .4f}\n'
                 f'  valid loss {val_loss.item(): .4f} '
                 f'  valid metric {val_metric.item(): .4f}')
+    if verbose:
+        print()
     return (params, state, opt_state, train_losses, train_metrics,
             val_losses, val_metrics)
 
 
 if __name__ == '__main__':
     # Configs
+    save_name = 'vgg8_cifar10' # None or empty to not save
     seed = 0
-    n_epochs = 15
+    n_epochs = 200
     batch_size = 64
-    val_prop = 0.2
-    lr = 0.1
+    val_prop = 0.08
+    test_prop = 0.16
+    lr = 0.01
 
     key = random.PRNGKey(seed)
-    tf.random.set_seed(0)
-    tf.random.uniform((10,))
 
-    train_ds, val_ds, test_ds = get_data(batch_size=batch_size,
-                                         val_prop=val_prop)
+    train_ds, val_ds, test_ds = load_cifar10(batch_size=batch_size,
+                                             val_prop=val_prop,
+                                             test_prop=test_prop,
+                                             seed=seed)
 
     (params, state, opt_state, train_losses, train_metrics,
      val_losses, val_metrics) = train_valid_loop(
         train_ds, val_ds, n_epochs, key, lr, verbose=True
         )
     plt_curves(train_losses, train_metrics, val_metrics, val_losses)
-    plt.show()
 
-    # test_loss, test_metric = test_loop(test_ds, params)
-    # print()
-    # print(f'Test loss: {test_loss: .4f}\n'
-    #       f'Test metric: {test_metric: .4f}')
+
+    if save_name is not None and save_name != '':
+        # Save model
+        model_path = os.path.join('./models', save_name)
+        save_jax_model(params, state, model_path)
+        # Load it to test the saved model
+        params, state = load_jax_model(model_path)
+
+    # Test loop (comment out if you don't want to test)
+    test_loss, test_metric = test_loop(test_ds, params, state, key)
+    plt_curves_test(test_loss, test_metric)
+
+    # Show the plots
+    plt.show()
