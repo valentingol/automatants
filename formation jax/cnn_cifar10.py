@@ -57,8 +57,8 @@ class VGG8(hk.Module):
         X = jax.nn.relu(self.conv1_2(X))
         X = self.bn1_2(X, is_training=training)
         X = hk.max_pool(X, [2, 2], 2, 'SAME')
-        key = hk.next_rng_key()
-        X = hk.dropout(key, 0.2, X)
+        if training:
+            X = hk.dropout(hk.next_rng_key(), 0.2, X)
 
         # Block 2
         X = jax.nn.relu(self.conv2_1(X))
@@ -66,8 +66,8 @@ class VGG8(hk.Module):
         X = jax.nn.relu(self.conv2_2(X))
         X = self.bn2_2(X, is_training=training)
         X = hk.max_pool(X, [2, 2], 2, 'SAME')
-        key = hk.next_rng_key()
-        X = hk.dropout(key, 0.3, X)
+        if training:
+            X = hk.dropout(hk.next_rng_key(), 0.3, X)
 
         # Block 3
         X = jax.nn.relu(self.conv3_1(X))
@@ -75,15 +75,15 @@ class VGG8(hk.Module):
         X = jax.nn.relu(self.conv3_2(X))
         X = self.bn3_2(X, is_training=training)
         X = hk.max_pool(X, [2, 2], 2, 'SAME')
-        key = hk.next_rng_key()
-        X = hk.dropout(key, 0.4, X)
+        if training:
+            X = hk.dropout(hk.next_rng_key(), 0.4, X)
 
         # Classifier
         X = hk.Flatten()(X)
         X = jax.nn.relu(self.linear1(X))
         X = self.bn4(X, is_training=training)
-        key = hk.next_rng_key()
-        X = hk.dropout(key, 0.5, X)
+        if training:
+            X = hk.dropout(hk.next_rng_key(), 0.5, X)
         X = self.linear2(X)
         return X
 
@@ -205,9 +205,9 @@ def train_valid_loop(train_ds, val_ds, n_epochs, key, lr, verbose=True):
 
 if __name__ == '__main__':
     # Configs
-    save_name = 'vgg8_cifar10' # None or empty to not save
+    save_name = 'My_vgg8' # None or empty to not save
     seed = 0
-    n_epochs = 200
+    n_epochs = 300
     batch_size = 64
     val_prop = 0.08
     test_prop = 0.16
