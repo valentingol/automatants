@@ -7,6 +7,7 @@ import jax
 from jax import jit, numpy as jnp, random, value_and_grad as vgrad
 import matplotlib.pyplot as plt
 import optax
+from optax._src.clipping import clip_by_global_norm
 
 from utils.cifar10 import load_cifar10
 from utils.mean import MultiMean
@@ -99,7 +100,11 @@ def init_states(key, ds, lr):
         X, _ = tf_to_jax(X, y)
         params, state = forward_pass.init(key, X, True)
         break
-    optimizer = optax.sgd(lr, momentum=0.9)
+    optimizer = optax.chain(
+        optax.scale_by_adam(),
+        optax.add_decayed_weights(0.03),
+        optax.scale(-lr)
+    )
     opt_state = optimizer.init(params)
     return params, optimizer, opt_state, state
 
@@ -173,7 +178,6 @@ def train_valid_loop(key, train_ds, val_ds, n_epochs, lr,
                 f'  valid metric {val_metric: .4f}')
     if verbose:
         print()
-    print(evals_epoch)
     return params, state, opt_state, *evals_epoch
 
 
@@ -191,9 +195,9 @@ def test_loop(key, test_ds, params, state):
 
 if __name__ == '__main__':
     # Configs
-    save_name = '' # None or empty to not save
+    save_name = 'My_VGG8' # None or empty to not save
     seed = 0
-    n_epochs = 2
+    n_epochs = 100
     batch_size = 128
     val_prop = 0.08
     test_prop = 0.16
