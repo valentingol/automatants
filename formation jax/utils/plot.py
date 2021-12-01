@@ -7,13 +7,13 @@ def plt_curves(train_losses, train_metrics, val_losses, val_metrics):
     plt.title('Loss')
     plt.plot(x, train_losses, 'r--', label='train')
     plt.plot(x, val_losses, 'r', label='val')
-    plt.ylim(0, 2.4)
+    plt.ylim(0, 1.0)
     plt.legend(loc='best')
     plt.subplot(1, 2, 2)
     plt.title('Accuracy')
     plt.plot(x, train_metrics, 'b--', label='train')
     plt.plot(x, val_metrics, 'b', label='val')
-    plt.ylim(0, 1)
+    plt.ylim(0, 1.0)
     plt.legend(loc='best')
 
 

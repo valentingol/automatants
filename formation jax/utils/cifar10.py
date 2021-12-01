@@ -4,7 +4,7 @@ import tensorflow as tf
 def preprocessing(X, y):
     X = tf.cast(X, tf.float32) / 255.0
     y = tf.one_hot(y, 10, dtype=tf.float32)
-    y = tf.reshape(y, [-1, 10]) # NOTE: change
+    y = tf.reshape(y, [-1, 10])
     return X, y
 
 

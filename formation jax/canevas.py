@@ -18,7 +18,7 @@ if __name__ == '__main__':
     # Configs
     save_name = 'My_vgg8' # None or empty to not save
     seed = 0
-    n_epochs = 100
+    n_epochs = 30
     batch_size = 128
     val_prop = 0.08
     test_prop = 0.16
@@ -34,7 +34,7 @@ if __name__ == '__main__':
                                              seed=seed)
     # Train + Validation
     # ...
-    params, state = None, None
+    params, state = None
 
 
     if save_name is not None and save_name != '':
@@ -44,9 +44,8 @@ if __name__ == '__main__':
         # Load it to test the saved model
         params, state = load_jax_model(model_path)
 
-    # Test loop (comment out if you don't want to test)
-    if test:
-        pass
+    # Test loop
+    # ...
 
     # Show the plots
     plt.show()
