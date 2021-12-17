@@ -1,3 +1,3 @@
-haiku-dm
-matplotlib==3.4.3
-optax==0.0.9
+haiku-dm>=0.0.5
+matplotlib>=3.4.3
+optax>=0.0.9
