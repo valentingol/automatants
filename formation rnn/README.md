@@ -38,5 +38,5 @@ pip install -r requirements.txt
 Vous pouvez à présent faire touner le code pour entraîner un LSTM avec tensorflow:
 
 ```script
-python train_lstm.py
+python train_rnn.py
 ```
