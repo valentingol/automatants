@@ -62,26 +62,10 @@ Doc d'Haiku: <https://dm-haiku.readthedocs.io/en/latest/>
 
 Doc d'Optax: <https://optax.readthedocs.io/en/latest/>
 
-### Installer Tensorflow (CPU-only !)
-
-Tensorflow 2 est bien souvent utilisé dans les pipelines de machine learning utilisant JAX en framework de calcul. La raison ? Tensorflow cotient des classes de gestion de données (`tf.data.Dataset`) très utile pour faire du traitement rapide et maniable de données (mise en batch, en prefetch, en cache, répétition, etc...).
-
-**Attention** Tensorflow va par défaut accaprer une partie de la mémoire VRAM (= la RAM du GPU) dès la première utilisation de celui-ci. Pour nous, Tensorflow ne va servir que pour disstribuer les batchs de données qui seront ensuite déplacé de la mémoire CPU vers la VRAM (GPU) par JAX. Il est donc inutile (et contre-productif) d'installer le support GPU pour Tensorflow.
-
-On installe donc préférentiellement Tensorflow **avec sa version CPU-only** en suivant l'instruction du site officiel [Installer TensorFlow avec pip](https://www.tensorflow.org/install/pip?hl=fr#package-location) en fonction de votre OS et de la version de Python (utilisez Linux pour WSL).
-
-Par exemple en Python 3.9 avec Linux:
+Installez les modules restant avec:
 
 ```script
-pip install tensorflow -f https://storage.googleapis.com/tensorflow/linux/cpu/tensorflow_cpu-2.6.0-cp39-cp39-manylinux2010_x86_64.whl
-```
-
-### Installer les autres librairies
-
-On a besoin de **Matplotlib** pour visualiser les résultats de l'entraînement.
-
-```script
-pip install matplotlib
+pip install -r requirements.txt
 ```
 
 ## Quick start

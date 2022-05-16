@@ -1,3 +1,4 @@
 haiku-dm>=0.0.5
 matplotlib>=3.4.3
 optax>=0.0.9
+tensorflow-cpu>=1.5

@@ -6,202 +6,250 @@ from haiku.initializers import VarianceScaling as Vscaling
 import jax
 from jax import jit, numpy as jnp, random, value_and_grad as vgrad
 import matplotlib.pyplot as plt
+import numpy as np
 import optax
 
 from utils.cifar10 import load_cifar10
-from utils.mean import MultiMean
 from utils.plot import plt_curves, plt_curves_test
-from utils.save_and_load import save_jax_model, load_jax_model
+from utils.save_and_load import save_jax_model
 
-class VGG8(hk.Module):
-    def __init__(self):
+
+class VGGBlock(hk.Module):
+    def __init__(self, units, kernel_size=3, dropout=0.0):
         super().__init__()
-        # Block 1
-        self.conv1_1 = hk.Conv2D(32, 3, w_init=Vscaling(2.0))
-        self.bn1_1 = hk.BatchNorm(True, True, 0.99)
-        self.conv1_2 = hk.Conv2D(32, 3, w_init=Vscaling(2.0))
-        self.bn1_2 = hk.BatchNorm(True, True, 0.99)
-        # Block 2
-        self.conv2_1 = hk.Conv2D(64, 3, w_init=Vscaling(2.0))
-        self.bn2_1 = hk.BatchNorm(True, True, 0.99)
-        self.conv2_2 = hk.Conv2D(64, 3, w_init=Vscaling(2.0))
-        self.bn2_2 = hk.BatchNorm(True, True, 0.99)
-        # Block 2
-        self.conv3_1 = hk.Conv2D(128, 3, w_init=Vscaling(2.0))
-        self.bn3_1 = hk.BatchNorm(True, True, 0.99)
-        self.conv3_2 = hk.Conv2D(128, 3, w_init=Vscaling(2.0))
-        self.bn3_2 = hk.BatchNorm(True, True, 0.99)
-        # Linear part
-        self.lin1 = hk.Linear(128, w_init=Vscaling(2.0))
-        self.bn4 = hk.BatchNorm(True, True, 0.99)
-        self.lin2 = hk.Linear(10, w_init=Vscaling(1.0, "fan_avg"))
-
-    def forward(self, x, is_training):
-        # Block 1
-        x = jax.nn.relu(self.conv1_1(x))
-        x = self.bn1_1(x, is_training)
-        x = jax.nn.relu(self.conv1_2(x))
-        x = self.bn1_2(x, is_training)
-        x = hk.max_pool(x, 2, 2, "SAME")
-        if is_training:
-            x = hk.dropout(hk.next_rng_key(), 0.2, x)
-        # Block 2
-        x = jax.nn.relu(self.conv2_1(x))
-        x = self.bn2_1(x, is_training)
-        x = jax.nn.relu(self.conv2_2(x))
-        x = self.bn2_2(x, is_training)
-        x = hk.max_pool(x, 2, 2, "SAME")
-        if is_training:
-            x = hk.dropout(hk.next_rng_key(), 0.3, x)
-        # Block 3
-        x = jax.nn.relu(self.conv3_1(x))
-        x = self.bn3_1(x, is_training)
-        x = jax.nn.relu(self.conv3_2(x))
-        x = self.bn3_2(x, is_training)
-        x = hk.max_pool(x, 2, 2, "SAME")
-        if is_training:
-            x = hk.dropout(hk.next_rng_key(), 0.4, x)
-        # Linear part
-        x = hk.Flatten()(x)
-        x = jax.nn.relu(self.lin1(x))
-        x = self.bn4(x, is_training)
-        if is_training:
-            x = hk.dropout(hk.next_rng_key(), 0.5, x)
-        x = self.lin2(x)
-        return x # logits
+        self.units = units
+        self.kernel_size = kernel_size
+        self.dropout = dropout
 
     def __call__(self, x, is_training):
-        return self.forward(x, is_training)
+        for _ in range(2):
+            # Vscaling(2.0) -> He initialization
+            x = hk.Conv2D(self.units, self.kernel_size,
+                          w_init=Vscaling(2.0))(x)
+            x = jax.nn.relu(x)
+            # Batch norm: True, True -> create scale + offset params
+            x = hk.BatchNorm(True, True, 0.99)(x, is_training)
+        x = hk.max_pool(x, 2, 2, "SAME")
+        if is_training and self.dropout > 0.0:
+            x = hk.dropout(hk.next_rng_key(), self.dropout, x)
+        return x
 
 
-@hk.transform_with_state
-def forward(X, is_training=True):
-    vgg8 = VGG8()
-    return vgg8(X, is_training)
+class VGG8:
+    def __init__(self, blocks_units, blocks_dropout, final_dim, final_dropout,
+                 n_classes):
+        self.blocks_units = blocks_units
+        self.blocks_dropout = blocks_dropout
+        self.final_dim = final_dim
+        self.final_dropout = final_dropout
+        self.n_classes = n_classes
+
+    @hk.transform_with_state
+    def forward(self, x, is_training):
+        # Convolutive blocks
+        for i in range(len(self.blocks_units)):
+            x = VGGBlock(
+                self.blocks_units[i], dropout=self.blocks_dropout[i]
+                )(x, is_training)
+        # Linear part
+        x = hk.Flatten()(x)
+        x = hk.Linear(self.final_dim, w_init=Vscaling(2.0))(x)
+        x = jax.nn.relu(x)
+        x = hk.BatchNorm(True, True, 0.99)(x, is_training)
+        if is_training:
+            x = hk.dropout(hk.next_rng_key(), self.final_dropout, x)
+        x = hk.Linear(self.n_classes, w_init=Vscaling(1.0, mode='fan_avg'))(x)
+        return x  # logits
+
+    def init(self, rng, x):
+        return self.forward.init(rng, self, x, is_training=True)
+
+    def apply(self, params, state, rng, x, is_training):
+        return self.forward.apply(params, state, rng, self, x, is_training)
+
+    def __call__(self, params, state, rng, x, is_training):
+        return self.apply(params, state, rng, x, is_training)
 
 
-def init(key, X, lr):
-    params, state = forward.init(key, X, True)
-    optimizer = optax.chain(
-        optax.scale_by_adam(),
-        optax.add_decayed_weights(0.03),
-        optax.scale(-lr)
-    )
-    opt_state = optimizer.init(params)
-    return params, state, opt_state, optimizer
+def get_optimizer(**config):
+    method = config.get('method', 'sgd')
+    lr = config.get('lr', 0.01)
+    weight_decay = config.get('weight_decay', 0.0)
+    if method == 'sgd':
+        optimizer = optax.chain(
+            optax.add_decayed_weights(weight_decay),
+            optax.scale(-lr)
+            )
+    elif method == 'adam':
+        optimizer = optax.chain(
+            optax.scale_by_adam(),
+            optax.add_decayed_weights(weight_decay),
+            optax.scale(-lr)
+            )
+    else:
+        raise ValueError(f'Unknown optimizer method: {method} '
+                         '(should be one of "sgd", "adam").')
+    return optimizer
 
 
-@partial(jit, static_argnums=5)
-def evaluate(params, state, key, X, y, is_training):
-    ypred, new_state = forward.apply(params, state, key, X, is_training)
+@partial(jit, static_argnums=[0, 6])
+def evaluate(model, params, state, key, X, y, is_training):
+    ypred, new_state = model(params, state, key, X, is_training)
     loss = optax.sigmoid_binary_cross_entropy(ypred, y).mean()
     metric = (jnp.argmax(ypred, axis=1) == jnp.argmax(y, axis=1)).mean()
     return loss, (new_state, metric)
 
 
-@partial(jit, static_argnums=5)
-def update(params, state, key, X, y, optimizer, opt_state):
-    (loss, (new_state, metric)), grads = vgrad(evaluate, has_aux=True)(
-        params, state, key, X, y, is_training=True
+@partial(jit, static_argnums=[0, 6])
+def update(model, params, state, key, X, y, optimizer, opt_state):
+    (loss, (new_state, metric)), grads = vgrad(evaluate, has_aux=True, argnums=1)(
+        model, params, state, key, X, y, is_training=True
         )
     updates, new_opt_state = optimizer.update(grads, opt_state, params)
     params = optax.apply_updates(params, updates)
     return params, new_state, new_opt_state, loss, metric
 
 
-def train_validation_loop(key, train_ds, val_ds, n_epochs, lr, verbose=True):
+def fit(model, optimizer, data, key, **config):
+    n_epochs = config['n_epochs']
+    verbose = config['verbose']
+    wandb = config['wandb']
+    if wandb:
+        import wandb
+        wandb.init(project='jax-cnn-cifar10', config=config)
+
     # Initialization
-    for X, _ in train_ds.take(1): # go only once to get the shape
+    for X, _ in data['train'].take(1):  # take only first batch
         X = jnp.array(X)
-        params, state, opt_state, optimizer = init(key, X, lr)
+        params, state = model.init(key, X)
+        opt_state = optimizer.init(params)
     if verbose:
         print('Initialization done')
 
-    # evals: train_loss, train_metric, val_loss, val_metric
-    evals = MultiMean(4)
-    evals_epoch = [[] for _ in range(4)]
+    history = {'train_loss': [], 'train_metric': [], 'val_loss': [],
+               'val_metric': []}
     for epoch in range(1, n_epochs + 1):
-        # Train loop
-        for i, (X_batch, y_batch) in enumerate(train_ds):
+        print(f'Epoch {epoch}/{n_epochs}')
+        # Training loop
+        train_losses, train_metrics = [], []
+        for i_batch, (X_batch, y_batch) in enumerate(data['train']):
             X_batch, y_batch = jnp.array(X_batch), jnp.array(y_batch)
             params, state, opt_state, loss, metric = update(
-                params, state, key, X_batch, y_batch, optimizer, opt_state
+                model, params, state, key, X_batch, y_batch, optimizer, opt_state
             )
-            evals(loss, metric, None, None)
+            train_losses.append(np.array(loss))
+            train_metrics.append(np.array(metric))
             if verbose:
-                print(f'  batch {i} - loss: {loss:.4f} - metric: {metric:.4f}  ',
-                      end='\r')
+                print(f'  batch {i_batch + 1}/{len(data["train"])}', end='\r')
 
         # Validation Loop
-        for X_batch, y_batch in val_ds:
+        val_losses, val_metrics = [], []
+        for X_batch, y_batch in data['val']:
             X_batch, y_batch = jnp.array(X_batch), jnp.array(y_batch)
             loss, (state, metric) = evaluate(
-                params, state, key, X_batch, y_batch, is_training=False
+                model, params, state, key, X_batch, y_batch, is_training=False
             )
-            evals(None, None, loss, metric)
+            val_losses.append(np.array(loss))
+            val_metrics.append(np.array(metric))
 
-        evaluations = evals.values
-        for i in range(4):
-            evals_epoch[i].append(evaluations[i])
-        evals.reset()
+        evals = {
+            'train_loss': np.mean(train_losses),
+            'train_metric': np.mean(train_metrics),
+            'val_loss': np.mean(val_losses),
+            'val_metric': np.mean(val_metrics),
+            }
+        for k, v in evals.items():
+            history[k].append(v)
 
         if verbose:
-            print(f'\n\nEpoch {epoch}/{n_epochs}\n'
-                  f'    train_loss: {evaluations[0]:.4f} - '
-                  f'train_metric: {evaluations[1]:.4f}\n'
-                  f'    val_loss: {evaluations[2]:.4f} - '
-                  f'val_metric: {evaluations[3]:.4f}')
+            for i, (k, v) in enumerate(evals.items()):
+                if i in {0, 2}:
+                    if i == 2: print()
+                    print('  ', end='')
+                print(f'{k}: {v:.4f} ', end='')
+            print('\n')
 
-    return tuple([params, state, opt_state, optimizer, *evals_epoch])
+        if wandb:
+            wandb.log(evals)
+
+    return params, state, opt_state, history
 
 
-def test_loop(params, state, key, test_ds):
-    evals = MultiMean(2)
+def test_loop(model, params, state, key, test_ds):
+    test_losses, test_metrics = [], []
     for X_batch, y_batch in test_ds:
         X_batch, y_batch = jnp.array(X_batch), jnp.array(y_batch)
         loss, (state, metric) = evaluate(
-            params, state, key, X_batch, y_batch, is_training=False
+            model, params, state, key, X_batch, y_batch, is_training=False
         )
-        evals(loss, metric)
-    return evals.values
+        test_losses.append(np.array(loss))
+        test_metrics.append(np.array(metric))
+    return np.mean(test_losses), np.mean(test_metrics)
+
+
+def run():
+    seed = config['seed']
+
+    # Get data, model and optimizer
+    train_ds, val_ds, test_ds = load_cifar10(seed=seed, **config['data'])
+    data = {'train': train_ds, 'val': val_ds, 'test': test_ds}
+    model = VGG8(**config['model'])
+    optimizer = get_optimizer(**config['optimizer'])
+
+    # Fit model
+    key = random.PRNGKey(seed)
+    params, state, opt_state, history = fit(
+        model, optimizer, data, key, **config['training']
+        )
+
+    # Save model
+    if config['save_name']:  # not None and not empty string
+        model_path = os.path.join('./models', config['save_name'])
+        save_jax_model(model_path, params=params, state=state,
+                       opt_state=opt_state, config_model=config['model'],
+                       config_opt=config['optimizer'])
+
+    # Plot history
+    if config['plot']:
+        plt_curves(history)
+
+    # Test loop
+    if config['test']:
+        evals = test_loop(model, params, state, key, test_ds)
+        plt_curves_test(*evals)
+
+    if config['plot']:
+        plt.show()
 
 
 if __name__ == '__main__':
     # Configs
-    save_name = 'My_vgg8' # None or empty to not save
-    seed = 0
-    n_epochs = 30
-    batch_size = 128
-    val_prop = 0.08
-    test_prop = 0.16
-    lr = 0.01
-    verbose = True
-    test = False
-
-    key = random.PRNGKey(seed)
-
-    train_ds, val_ds, test_ds = load_cifar10(batch_size=batch_size,
-                                             val_prop=val_prop,
-                                             test_prop=test_prop,
-                                             seed=seed)
-    # Train + Validation
-    params, state, _, _, *evals_epoch = train_validation_loop(
-        key, train_ds, val_ds, n_epochs=n_epochs, lr=lr, verbose=verbose
-        )
-    plt_curves(*evals_epoch)
-
-
-    if save_name is not None and save_name != '':
-        # Save model
-        model_path = os.path.join('./models', save_name)
-        save_jax_model(params, state, model_path)
-        # Load it to test the saved model
-        params, state = load_jax_model(model_path)
-
-    # Test loop
-    if test:
-        evals = test_loop(params, state, key, test_ds)
-        plt_curves_test(*evals)
-
-    # Show the plots
-    plt.show()
+    config = {
+        'seed': 0,
+        'test': False,
+        'plot': True,
+        'save_name': 'my_vgg8',
+        'data': {
+            'batch_size': 128,
+            'val_prop': 0.2,
+            'test_prop': 0.1,
+            },
+        'training': {
+            'wandb': False,
+            'verbose': True,
+            'n_epochs': 30,
+            },
+        'optimizer': {
+            'method': 'adam',
+            'lr': 0.01,
+            'weight_decay': 0.03,
+            },
+        'model': {
+            'blocks_units': [32, 64, 128],
+            'blocks_dropout': [0.2, 0.3, 0.4],
+            'final_dim': 128,
+            'final_dropout': 0.5,
+            'n_classes': 10,
+            },
+        }
+    run()

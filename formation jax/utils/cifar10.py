@@ -1,5 +1,7 @@
+import os
 from jax import numpy as jnp
 import tensorflow as tf
+
 
 def preprocessing(X, y):
     X = tf.cast(X, tf.float32) / 255.0
@@ -36,8 +38,8 @@ def load_cifar10(batch_size=64, val_prop=0.2, test_prop=0.1, seed=0):
     val_ds = prepare_dataset(val_ds)
     test_ds = prepare_dataset(test_ds)
 
-    print('training dataset n_batchs:', len(train_ds))
-    print('validation dataset n_batchs:', len(val_ds))
-    print('test dataset n_batchs:', len(test_ds))
+    print('training num batchs:', len(train_ds))
+    print('validation num batchs:', len(val_ds))
+    print('test num batchs:', len(test_ds))
 
     return train_ds, val_ds, test_ds
